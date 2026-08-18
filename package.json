@@ -1,0 +1,14 @@
+{
+  "name": "video-editor-monorepo",
+  "private": true,
+  "version": "1.0.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspace=web",
+    "dev": "npm run dev --workspace=web",
+    "preview": "npm run preview --workspace=web"
+  }
+}

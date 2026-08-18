@@ -1,0 +1,31 @@
+import { Project } from '@video-editor/types';
+
+export class CanvasRenderer {
+  private ctx: CanvasRenderingContext2D;
+
+  constructor(private canvas: HTMLCanvasElement, private project: Project) {
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('No se pudo obtener contexto 2D');
+    this.ctx = ctx;
+  }
+
+  render() {
+    const { width, height } = this.project;
+    this.canvas.width = width;
+    this.canvas.height = height;
+
+    // Limpiar canvas
+    this.ctx.clearRect(0, 0, width, height);
+    
+    // Renderizar fondo
+    this.ctx.fillStyle = '#1a1a1a';
+    this.ctx.fillRect(0, 0, width, height);
+
+    // Aquí va tu lógica de renderizado
+    // ... 
+  }
+
+  dispose() {
+    // Limpiar recursos si es necesario
+  }
+}

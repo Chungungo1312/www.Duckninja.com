@@ -1,0 +1,13 @@
+{
+  "name": "@video-editor/engine",
+  "version": "0.0.1",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "dependencies": {
+    "@video-editor/types": "workspace:*",
+    "nanoid": "^5.0.0",
+    "idb-keyval": "^6.2.1",
+    "@ffmpeg/ffmpeg": "0.12.10",
+    "@ffmpeg/util": "0.12.1"
+  }
+}

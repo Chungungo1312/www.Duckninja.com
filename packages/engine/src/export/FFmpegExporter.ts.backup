@@ -1,0 +1,37 @@
+import { FFmpeg } from '@ffmpeg/ffmpeg';
+import { toBlobURL } from '@ffmpeg/util';
+import { VideoEditorError } from '@video-editor/types';
+
+export class FFmpegExporter {
+  private ffmpeg: FFmpeg;
+  private loaded = false;
+
+  constructor() {
+    this.ffmpeg = new FFmpeg();
+  }
+
+  async load() {
+    if (this.loaded) return;
+    
+    const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
+    await this.ffmpeg.load({
+      coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
+      wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+    });
+    this.loaded = true;
+  }
+
+  async exportVideo(data: Uint8Array): Promise<Blob> {
+    if (!this.loaded) {
+      throw new VideoEditorError('FFmpeg no cargado');
+    }
+
+    try {
+      // Convertir Uint8Array a Blob correctamente
+      const blob = new Blob([data.buffer as ArrayBuffer], { type: 'video/mp4' });
+      return blob;
+    } catch (error) {
+      throw new VideoEditorError(`Error exportando video: ${error}`);
+    }
+  }
+}

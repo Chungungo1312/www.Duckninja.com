@@ -1,0 +1,27 @@
+import React, { useEffect, useRef } from 'react';
+import { useStore } from '../../store/useStore';
+import { CanvasRenderer } from '@video-editor/engine/src/render/CanvasRenderer';
+
+export const Preview: React.FC = () => {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const { project, activeClips } = useStore();
+
+  useEffect(() => {
+    if (!canvasRef.current) return;
+    
+    const renderer = new CanvasRenderer(canvasRef.current, project);
+    // const textClips = activeClips.filter((c) => c.text !== undefined); // Variable no usada - comentada
+    
+    renderer.render();
+    
+    return () => {
+      renderer.dispose?.();
+    };
+  }, [project, activeClips]);
+
+  return (
+    <div className="preview-container">
+      <canvas ref={canvasRef} className="preview-canvas" />
+    </div>
+  );
+};
