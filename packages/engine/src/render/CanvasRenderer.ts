@@ -2,7 +2,7 @@ import { Project, Clip } from '@video-editor/types';
 
 export class CanvasRenderer {
   private ctx: CanvasRenderingContext2D;
-  private videoCache = new Map<string, HTMLVideoElement>();
+  private mediaCache = new Map<string, HTMLVideoElement | HTMLAudioElement>();
 
   constructor(private canvas: HTMLCanvasElement, private project: Project) {
     const ctx = canvas.getContext('2d');
@@ -18,17 +18,45 @@ export class CanvasRenderer {
     this.canvas.height = resolution.height;
   }
 
-  private getOrCreateVideo(assetId: string): HTMLVideoElement | null {
-    if (this.videoCache.has(assetId)) return this.videoCache.get(assetId)!;
+  private getOrCreateMedia(assetId: string): HTMLVideoElement | HTMLAudioElement | null {
+    if (this.mediaCache.has(assetId)) return this.mediaCache.get(assetId)!;
     const asset = this.project.assets[assetId];
-    if (!asset || asset.type !== 'video') return null;
-    const video = document.createElement('video');
-    video.src = asset.url;
-    video.muted = true;
-    video.crossOrigin = 'anonymous';
-    video.playsInline = true;
-    this.videoCache.set(assetId, video);
-    return video;
+    if (!asset || (asset.type !== 'video' && asset.type !== 'audio')) return null;
+
+    const el: HTMLVideoElement | HTMLAudioElement =
+      asset.type === 'video' ? document.createElement('video') : document.createElement('audio');
+    el.src = asset.url;
+    el.muted = true;
+    el.crossOrigin = 'anonymous';
+    el.preload = 'auto';
+    if (el instanceof HTMLVideoElement) el.playsInline = true;
+    this.mediaCache.set(assetId, el);
+    return el;
+  }
+
+  // Crea y empieza a bufferear TODOS los assets del proyecto por adelantado.
+  // Esto evita que, al llegar el turno de un clip que recién se activa durante
+  // la reproducción, la pantalla quede en negro mientras el navegador todavía
+  // está descargando/decodificando ese video por primera vez.
+  async preloadAssets(): Promise<void> {
+    const mediaAssets = Object.values(this.project.assets).filter(
+      (a) => a.type === 'video' || a.type === 'audio'
+    );
+
+    await Promise.all(
+      mediaAssets.map((asset) => {
+        const el = this.getOrCreateMedia(asset.id);
+        if (!el) return Promise.resolve();
+        if (el.readyState >= 2) return Promise.resolve(); // HAVE_CURRENT_DATA o más
+
+        return new Promise<void>((resolve) => {
+          const onReady = () => { el.removeEventListener('loadeddata', onReady); resolve(); };
+          el.addEventListener('loadeddata', onReady);
+          // failsafe: no bloquear indefinidamente si un asset tarda demasiado
+          setTimeout(resolve, 4000);
+        });
+      })
+    );
   }
 
   private getClipOpacity(clip: Clip, frame: number): number {
@@ -45,10 +73,7 @@ export class CanvasRenderer {
   }
 
   private applyEffectsFilter(clip: Clip): void {
-    if (!clip.effects || clip.effects.length === 0) {
-      this.ctx.filter = 'none';
-      return;
-    }
+    if (!clip.effects || clip.effects.length === 0) { this.ctx.filter = 'none'; return; }
     const filters = clip.effects
       .map((effect) => {
         switch (effect.type) {
@@ -58,8 +83,7 @@ export class CanvasRenderer {
           default: return '';
         }
       })
-      .filter(Boolean)
-      .join(' ');
+      .filter(Boolean).join(' ');
     this.ctx.filter = filters || 'none';
   }
 
@@ -80,6 +104,7 @@ export class CanvasRenderer {
     this.ctx.restore();
   }
 
+  // Scrubbing: dibuja todos los clips activos (solo video visualmente) haciendo seek preciso
   async renderFrame(frame: number, activeClips: Clip[]): Promise<void> {
     const { width, height } = this.project.resolution;
     this.ctx.clearRect(0, 0, width, height);
@@ -87,11 +112,11 @@ export class CanvasRenderer {
     this.ctx.fillRect(0, 0, width, height);
 
     for (const clip of activeClips) {
-      if (clip.text !== undefined) {
-        this.drawTextClip(clip, frame);
-        continue;
-      }
-      const video = this.getOrCreateVideo(clip.assetId);
+      if (clip.text !== undefined) { this.drawTextClip(clip, frame); continue; }
+      const asset = this.project.assets[clip.assetId];
+      if (!asset || asset.type !== 'video') continue; // el audio no se dibuja
+
+      const video = this.getOrCreateMedia(clip.assetId) as HTMLVideoElement | null;
       if (!video) continue;
 
       const relativeFrame = frame - clip.startFrame;
@@ -111,48 +136,49 @@ export class CanvasRenderer {
     }
   }
 
-  // Arranca la reproducción nativa de UN clip individual (usado para activar clips
-  // de distintas pistas de forma independiente cuando cada uno comienza)
+  // Arranca UN clip individual (video o audio) — usado durante Play para activar
+  // clips de cualquier pista de forma independiente cuando cada uno comienza.
   startClip(clip: Clip, frame: number): void {
-    const video = this.getOrCreateVideo(clip.assetId);
-    if (!video) return;
+    const media = this.getOrCreateMedia(clip.assetId);
+    if (!media) return;
 
     const relativeFrame = frame - clip.startFrame;
     const sourceFrame = clip.trimStart + relativeFrame * clip.speed;
     const targetTime = sourceFrame / this.project.fps;
 
-    video.currentTime = targetTime;
-    video.playbackRate = clip.speed;
-    video.muted = false;
-    video.volume = Math.max(0, Math.min(clip.volume, 1));
-    video.play().catch(() => {});
+    media.currentTime = targetTime;
+    media.playbackRate = clip.speed;
+    media.muted = false;
+    media.volume = Math.max(0, Math.min(clip.volume, 1));
+    media.play().catch(() => {});
   }
 
-  // Detiene un clip específico (por assetId) sin afectar a otros clips reproduciéndose
   stopClip(assetId: string): void {
-    const video = this.videoCache.get(assetId);
-    if (!video) return;
-    video.pause();
-    video.muted = true;
+    const media = this.mediaCache.get(assetId);
+    if (!media) return;
+    media.pause();
+    media.muted = true;
   }
 
   pauseAll(): void {
-    this.videoCache.forEach((video) => {
-      video.pause();
-      video.muted = true;
-    });
+    this.mediaCache.forEach((media) => { media.pause(); media.muted = true; });
   }
 
-  // Dibuja todos los clips de video activos (compuestos por orden de pista) + overlays de texto
-  drawActiveClips(videoClips: Clip[], frame: number, textClips: Clip[] = []): void {
+  // Dibuja los clips de video activos (compuestos) + overlays de texto.
+  // Los clips de audio se ignoran aquí (ya están sonando vía startClip).
+  drawActiveClips(mediaClips: Clip[], frame: number, textClips: Clip[] = []): void {
     const { width, height } = this.project.resolution;
     this.ctx.clearRect(0, 0, width, height);
     this.ctx.fillStyle = '#000000';
     this.ctx.fillRect(0, 0, width, height);
 
-    for (const clip of videoClips) {
-      const video = this.videoCache.get(clip.assetId);
-      if (!video) continue;
+    for (const clip of mediaClips) {
+      const asset = this.project.assets[clip.assetId];
+      if (!asset || asset.type !== 'video') continue;
+
+      const video = this.mediaCache.get(clip.assetId) as HTMLVideoElement | undefined;
+      if (!video || video.readyState < 2) continue; // aún sin frame decodificado: se omite en vez de pintar negro
+
       this.ctx.save();
       this.applyEffectsFilter(clip);
       this.ctx.globalAlpha = this.getClipOpacity(clip, frame);
@@ -160,9 +186,7 @@ export class CanvasRenderer {
       this.ctx.restore();
     }
 
-    for (const overlay of textClips) {
-      this.drawTextClip(overlay, frame);
-    }
+    for (const overlay of textClips) this.drawTextClip(overlay, frame);
   }
 
   renderTestFrame(): void {
@@ -180,19 +204,13 @@ export class CanvasRenderer {
 
   private waitForSeek(video: HTMLVideoElement): Promise<void> {
     return new Promise((resolve) => {
-      const handler = () => {
-        video.removeEventListener('seeked', handler);
-        resolve();
-      };
+      const handler = () => { video.removeEventListener('seeked', handler); resolve(); };
       video.addEventListener('seeked', handler);
     });
   }
 
   dispose(): void {
-    this.videoCache.forEach((video) => {
-      video.pause();
-      video.src = '';
-    });
-    this.videoCache.clear();
+    this.mediaCache.forEach((media) => { media.pause(); media.src = ''; });
+    this.mediaCache.clear();
   }
 }

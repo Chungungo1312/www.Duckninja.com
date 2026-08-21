@@ -26,6 +26,7 @@ interface TimelineState {
   setActiveVideoTrack: (trackId: string) => void;
   addAsset: (asset: Asset) => void;
   addVideoClip: (assetId: string, durationFrames: number) => void;
+  addAudioClip: (assetId: string, durationFrames: number) => void;
   addClip: (trackId: string, clip: Omit<Clip, 'id' | 'trackId'>) => void;
   addTextClip: (content: string) => void;
   duplicateClip: (clipId: string) => void;
@@ -57,12 +58,8 @@ interface TimelineState {
 }
 
 const emptyProject: Project = {
-  id: 'draft',
-  name: 'Proyecto sin título',
-  fps: 30,
-  resolution: { width: 1080, height: 1920 },
-  tracks: [],
-  assets: {},
+  id: 'draft', name: 'Proyecto sin título', fps: 30,
+  resolution: { width: 1080, height: 1920 }, tracks: [], assets: {},
 };
 
 const defaultEffects = (): Effect[] => [
@@ -75,8 +72,6 @@ const cloneProject = (p: Project): Project => JSON.parse(JSON.stringify(p));
 
 export const useTimelineStore = create<TimelineState>()(
   immer((set, get) => {
-    // Guarda un snapshot del proyecto ANTES de una mutación (para undo/redo).
-    // Se llama al inicio de cada acción que cambia la estructura del proyecto.
     const snapshot = (state: TimelineState) => {
       state.historyPast.push(cloneProject(state.project));
       if (state.historyPast.length > MAX_HISTORY) state.historyPast.shift();
@@ -115,11 +110,9 @@ export const useTimelineStore = create<TimelineState>()(
           state.activeVideoTrackId = track.id;
         }),
 
-      setActiveVideoTrack: (trackId) =>
-        set((state) => { state.activeVideoTrackId = trackId; }),
+      setActiveVideoTrack: (trackId) => set((state) => { state.activeVideoTrackId = trackId; }),
 
-      addAsset: (asset) =>
-        set((state) => { state.project.assets[asset.id] = asset; }),
+      addAsset: (asset) => set((state) => { state.project.assets[asset.id] = asset; }),
 
       addVideoClip: (assetId, durationFrames) =>
         set((state) => {
@@ -130,18 +123,30 @@ export const useTimelineStore = create<TimelineState>()(
             : state.project.tracks.find((t) => t.type === 'video');
           if (!targetTrack) targetTrack = model.addTrack('video');
 
-          const lastClipEnd = targetTrack.clips.reduce(
-            (max, c) => Math.max(max, c.startFrame + c.durationFrames), 0
-          );
-
+          const lastClipEnd = targetTrack.clips.reduce((max, c) => Math.max(max, c.startFrame + c.durationFrames), 0);
           model.addClip(targetTrack.id, {
             assetId, startFrame: lastClipEnd, durationFrames,
             trimStart: 0, trimEnd: durationFrames, speed: 1, volume: 1,
             fadeInFrames: 0, fadeOutFrames: 0, effects: defaultEffects(),
           });
-
           state.project = model.getProject();
           state.activeVideoTrackId = targetTrack.id;
+        }),
+
+      addAudioClip: (assetId, durationFrames) =>
+        set((state) => {
+          snapshot(state);
+          const model = new TimelineModel(state.project);
+          let targetTrack = state.project.tracks.find((t) => t.type === 'audio');
+          if (!targetTrack) targetTrack = model.addTrack('audio');
+
+          const lastClipEnd = targetTrack.clips.reduce((max, c) => Math.max(max, c.startFrame + c.durationFrames), 0);
+          model.addClip(targetTrack.id, {
+            assetId, startFrame: lastClipEnd, durationFrames,
+            trimStart: 0, trimEnd: durationFrames, speed: 1, volume: 1,
+            fadeInFrames: 0, fadeOutFrames: 0, effects: [],
+          });
+          state.project = model.getProject();
         }),
 
       addClip: (trackId, clip) =>
@@ -177,7 +182,6 @@ export const useTimelineStore = create<TimelineState>()(
           const clip = track?.clips.find((c) => c.id === clipId);
           if (!track || !clip) return;
           snapshot(state);
-
           const model = new TimelineModel(state.project);
           const { id, trackId, ...rest } = clip;
           const newStart = clip.startFrame + clip.durationFrames;
@@ -203,17 +207,10 @@ export const useTimelineStore = create<TimelineState>()(
         set((state) => {
           const clip = state.clipboard;
           if (!clip) return;
-
-          let targetTrack = state.project.tracks.find(
-            (t) => t.type === (clip.text !== undefined ? 'text' : 'video')
-          );
-
+          let targetTrack = state.project.tracks.find((t) => t.type === (clip.text !== undefined ? 'text' : 'video'));
           snapshot(state);
           const model = new TimelineModel(state.project);
-          if (!targetTrack) {
-            targetTrack = model.addTrack(clip.text !== undefined ? 'text' : 'video');
-          }
-
+          if (!targetTrack) targetTrack = model.addTrack(clip.text !== undefined ? 'text' : 'video');
           const { id, trackId, ...rest } = clip;
           try {
             model.addClip(targetTrack.id, { ...rest, startFrame: state.playheadFrame });
@@ -222,7 +219,6 @@ export const useTimelineStore = create<TimelineState>()(
             state.toast = 'No se pudo pegar: se superpone con otro clip';
             return;
           }
-
           state.project = model.getProject();
           state.toast = 'Clip pegado';
         }),
@@ -271,11 +267,7 @@ export const useTimelineStore = create<TimelineState>()(
         set((state) => {
           for (const track of state.project.tracks) {
             const clip = track.clips.find((c) => c.id === clipId);
-            if (clip) {
-              clip.fadeInFrames = Math.max(0, fadeInFrames);
-              clip.fadeOutFrames = Math.max(0, fadeOutFrames);
-              break;
-            }
+            if (clip) { clip.fadeInFrames = Math.max(0, fadeInFrames); clip.fadeOutFrames = Math.max(0, fadeOutFrames); break; }
           }
         }),
 
@@ -293,8 +285,7 @@ export const useTimelineStore = create<TimelineState>()(
             const clip = track.clips.find((c) => c.id === clipId);
             if (clip) {
               const effect = clip.effects.find((e) => e.type === type);
-              if (effect) effect.value = value;
-              else clip.effects.push({ id: nanoid(), type, value });
+              if (effect) effect.value = value; else clip.effects.push({ id: nanoid(), type, value });
               break;
             }
           }
@@ -316,32 +307,15 @@ export const useTimelineStore = create<TimelineState>()(
           }
         }),
 
-      setPlayhead: (frame) =>
-        set((state) => { state.playheadFrame = Math.max(0, frame); }),
-
-      selectClip: (clipId) =>
-        set((state) => { state.selectedClipId = clipId; }),
-
-      setZoom: (zoom) =>
-        set((state) => { state.zoom = Math.max(0.5, Math.min(zoom, 50)); }),
-
-      setPlaying: (playing) =>
-        set((state) => { state.isPlaying = playing; }),
-
-      togglePlaying: () =>
-        set((state) => { state.isPlaying = !state.isPlaying; }),
-
-      setResolution: (width, height) =>
-        set((state) => { state.project.resolution = { width, height }; }),
-
-      setProjectName: (name) =>
-        set((state) => { state.project.name = name; }),
-
-      showToast: (message) =>
-        set((state) => { state.toast = message; }),
-
-      clearToast: () =>
-        set((state) => { state.toast = null; }),
+      setPlayhead: (frame) => set((state) => { state.playheadFrame = Math.max(0, frame); }),
+      selectClip: (clipId) => set((state) => { state.selectedClipId = clipId; }),
+      setZoom: (zoom) => set((state) => { state.zoom = Math.max(0.5, Math.min(zoom, 50)); }),
+      setPlaying: (playing) => set((state) => { state.isPlaying = playing; }),
+      togglePlaying: () => set((state) => { state.isPlaying = !state.isPlaying; }),
+      setResolution: (width, height) => set((state) => { state.project.resolution = { width, height }; }),
+      setProjectName: (name) => set((state) => { state.project.name = name; }),
+      showToast: (message) => set((state) => { state.toast = message; }),
+      clearToast: () => set((state) => { state.toast = null; }),
 
       undo: () =>
         set((state) => {
@@ -365,21 +339,14 @@ export const useTimelineStore = create<TimelineState>()(
 
       saveProject: async () => {
         set((state) => { state.isSaving = true; });
-        try { await ProjectStorage.save(get().project); }
-        finally { set((state) => { state.isSaving = false; }); }
+        try { await ProjectStorage.save(get().project); } finally { set((state) => { state.isSaving = false; }); }
       },
 
       loadProject: async (projectId) => {
         set((state) => { state.isLoading = true; });
         try {
           const loaded = await ProjectStorage.load(projectId);
-          if (loaded) {
-            set((state) => {
-              state.project = loaded;
-              state.playheadFrame = 0;
-              state.selectedClipId = null;
-            });
-          }
+          if (loaded) set((state) => { state.project = loaded; state.playheadFrame = 0; state.selectedClipId = null; });
         } finally { set((state) => { state.isLoading = false; }); }
       },
     };
