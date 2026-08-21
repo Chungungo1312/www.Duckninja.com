@@ -4,6 +4,7 @@ import type { Clip, TrackType } from '@video-editor/types';
 
 const PIXELS_PER_FRAME = 0.15;
 const HANDLE_WIDTH = 8;
+const MAX_VIDEO_TRACKS = 5;
 
 const TRACK_COLORS: Record<TrackType, string> = {
   video: '#4f46e5',
@@ -35,11 +36,16 @@ export function Timeline() {
   const trimClip = useTimelineStore((s) => s.trimClip);
   const moveClip = useTimelineStore((s) => s.moveClip);
   const addTrack = useTimelineStore((s) => s.addTrack);
+  const addVideoTrack = useTimelineStore((s) => s.addVideoTrack);
   const addTextClip = useTimelineStore((s) => s.addTextClip);
+  const activeVideoTrackId = useTimelineStore((s) => s.activeVideoTrackId);
+  const setActiveVideoTrack = useTimelineStore((s) => s.setActiveVideoTrack);
 
   const trimRef = useRef<TrimState | null>(null);
   const moveRef = useRef<MoveState | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+
+  const videoTrackCount = project.tracks.filter((t) => t.type === 'video').length;
 
   const handleSplit = () => {
     if (!selectedClipId) return;
@@ -60,8 +66,9 @@ export function Timeline() {
     if (content) addTextClip(content);
   };
 
-  const handleTrackClick = (e: React.MouseEvent<HTMLDivElement>) => {
+  const handleTrackClick = (e: React.MouseEvent<HTMLDivElement>, trackId: string, trackType: TrackType) => {
     if (isDragging) return;
+    if (trackType === 'video') setActiveVideoTrack(trackId);
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left;
     setPlayhead(Math.floor(x / PIXELS_PER_FRAME));
@@ -136,12 +143,23 @@ export function Timeline() {
         <button onClick={handleDelete} disabled={!selectedClipId} style={{ marginRight: '0.5rem' }}>
           Eliminar clip
         </button>
+        <button
+          onClick={addVideoTrack}
+          disabled={videoTrackCount >= MAX_VIDEO_TRACKS}
+          style={{ marginRight: '0.5rem' }}
+        >
+          + Pista de video ({videoTrackCount}/{MAX_VIDEO_TRACKS})
+        </button>
         <button onClick={() => addTrack('audio')} style={{ marginRight: '0.5rem' }}>
           + Pista de audio
         </button>
         <button onClick={handleAddText}>
           + Agregar texto
         </button>
+      </div>
+
+      <div style={{ color: '#666', fontSize: '12px', marginBottom: '0.5rem' }}>
+        Click en una pista de video para activarla — el próximo video importado se agrega ahí
       </div>
 
       <div style={{ background: '#1e1e1e', padding: '1rem', borderRadius: '8px', overflowX: 'auto', position: 'relative' }}>
@@ -152,16 +170,24 @@ export function Timeline() {
         {project.tracks.map((track) => (
           <div
             key={track.id}
-            onClick={handleTrackClick}
+            onClick={(e) => handleTrackClick(e, track.id, track.type)}
             style={{
               position: 'relative',
               height: '48px',
               marginBottom: '4px',
-              background: '#2a2a2a',
+              background: track.id === activeVideoTrackId ? '#3a3a1e' : '#2a2a2a',
+              border: track.id === activeVideoTrackId ? '1px solid #d97706' : '1px solid transparent',
               borderRadius: '4px',
               cursor: 'pointer',
             }}
           >
+            <span style={{
+              position: 'absolute', left: '-4px', top: '-18px',
+              fontSize: '10px', color: '#888', textTransform: 'uppercase',
+            }}>
+              {track.type}
+            </span>
+
             {track.clips.map((clip) => (
               <div
                 key={clip.id}

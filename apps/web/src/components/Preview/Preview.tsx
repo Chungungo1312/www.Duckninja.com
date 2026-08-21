@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { CanvasRenderer, TimelineModel } from '@video-editor/engine';
 import { useTimelineStore } from '../../store/timelineStore';
+import type { Clip } from '@video-editor/types';
 
 export function Preview() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const rendererRef = useRef<CanvasRenderer | null>(null);
   const rafRef = useRef<number | null>(null);
+  const referenceClipRef = useRef<Clip | null>(null);
 
   const project = useTimelineStore((s) => s.project);
   const playheadFrame = useTimelineStore((s) => s.playheadFrame);
@@ -40,31 +42,62 @@ export function Preview() {
       return;
     }
 
-    const activeClips = model.getClipsAtFrame(playheadFrame);
-    const videoClip = activeClips.find((c) => c.text === undefined);
-
-    if (!videoClip) {
-      setIsPlaying(false);
-      return;
-    }
-
-    rendererRef.current.playClip(videoClip, playheadFrame);
-
-    const tick = () => {
+    // Inicia (o reinicia) la reproducción de los clips activos en un frame dado
+    const startPlaybackAt = (frame: number) => {
       if (!rendererRef.current) return;
 
-      const currentFrame = rendererRef.current.getFrameFromClip(videoClip);
-      const currentActive = model.getClipsAtFrame(currentFrame);
-      const currentText = currentActive.filter((c) => c.text !== undefined);
+      const activeClips = model.getClipsAtFrame(frame);
+      const videoClips = activeClips.filter((c) => c.text === undefined);
 
-      rendererRef.current.drawCurrentFrame(videoClip, currentFrame, currentText);
+      if (videoClips.length === 0) {
+        // No hay clip de video en este punto: buscamos el siguiente clip de video que empiece después
+        const nextClip = project.tracks
+          .flatMap((t) => t.clips)
+          .filter((c) => c.text === undefined && c.startFrame >= frame)
+          .sort((a, b) => a.startFrame - b.startFrame)[0];
 
-      if (currentFrame >= videoClip.startFrame + videoClip.durationFrames || currentFrame >= totalDuration) {
-        setPlayhead(totalDuration);
-        setIsPlaying(false);
+        if (!nextClip || nextClip.startFrame >= totalDuration) {
+          setPlayhead(totalDuration);
+          setIsPlaying(false);
+          return;
+        }
+
+        setPlayhead(nextClip.startFrame);
+        startPlaybackAt(nextClip.startFrame);
         return;
       }
 
+      rendererRef.current.playClips(videoClips, frame);
+      referenceClipRef.current = videoClips[0];
+    };
+
+    startPlaybackAt(playheadFrame);
+
+    const tick = () => {
+      if (!rendererRef.current || !referenceClipRef.current) return;
+
+      const referenceClip = referenceClipRef.current;
+      const currentFrame = rendererRef.current.getFrameFromClip(referenceClip);
+      const clipEndFrame = referenceClip.startFrame + referenceClip.durationFrames;
+
+      // Si ya pasamos el final del clip de referencia, saltamos al/los siguiente(s) clip(s)
+      if (currentFrame >= clipEndFrame || currentFrame >= totalDuration) {
+        if (clipEndFrame >= totalDuration) {
+          setPlayhead(totalDuration);
+          setIsPlaying(false);
+          return;
+        }
+        setPlayhead(clipEndFrame);
+        startPlaybackAt(clipEndFrame);
+        rafRef.current = requestAnimationFrame(tick);
+        return;
+      }
+
+      const currentActive = model.getClipsAtFrame(currentFrame);
+      const currentVideo = currentActive.filter((c) => c.text === undefined);
+      const currentText = currentActive.filter((c) => c.text !== undefined);
+
+      rendererRef.current.drawActiveClips(currentVideo, currentFrame, currentText);
       setPlayhead(currentFrame);
       rafRef.current = requestAnimationFrame(tick);
     };

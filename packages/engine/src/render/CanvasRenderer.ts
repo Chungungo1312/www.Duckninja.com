@@ -12,6 +12,12 @@ export class CanvasRenderer {
     canvas.height = project.resolution.height;
   }
 
+  updateResolution(resolution: { width: number; height: number }): void {
+    this.project = { ...this.project, resolution };
+    this.canvas.width = resolution.width;
+    this.canvas.height = resolution.height;
+  }
+
   private getOrCreateVideo(assetId: string): HTMLVideoElement | null {
     if (this.videoCache.has(assetId)) return this.videoCache.get(assetId)!;
     const asset = this.project.assets[assetId];
@@ -85,7 +91,6 @@ export class CanvasRenderer {
         this.drawTextClip(clip, frame);
         continue;
       }
-
       const video = this.getOrCreateVideo(clip.assetId);
       if (!video) continue;
 
@@ -106,7 +111,9 @@ export class CanvasRenderer {
     }
   }
 
-  playClip(clip: Clip, frame: number): void {
+  // Arranca la reproducción nativa de UN clip individual (usado para activar clips
+  // de distintas pistas de forma independiente cuando cada uno comienza)
+  startClip(clip: Clip, frame: number): void {
     const video = this.getOrCreateVideo(clip.assetId);
     if (!video) return;
 
@@ -116,42 +123,46 @@ export class CanvasRenderer {
 
     video.currentTime = targetTime;
     video.playbackRate = clip.speed;
+    video.muted = false;
     video.volume = Math.max(0, Math.min(clip.volume, 1));
     video.play().catch(() => {});
   }
 
-  pauseAll(): void {
-    this.videoCache.forEach((video) => video.pause());
+  // Detiene un clip específico (por assetId) sin afectar a otros clips reproduciéndose
+  stopClip(assetId: string): void {
+    const video = this.videoCache.get(assetId);
+    if (!video) return;
+    video.pause();
+    video.muted = true;
   }
 
-  drawCurrentFrame(clip: Clip, frame: number, overlayClips: Clip[] = []): void {
-    const video = this.videoCache.get(clip.assetId);
-    if (!video) return;
+  pauseAll(): void {
+    this.videoCache.forEach((video) => {
+      video.pause();
+      video.muted = true;
+    });
+  }
 
+  // Dibuja todos los clips de video activos (compuestos por orden de pista) + overlays de texto
+  drawActiveClips(videoClips: Clip[], frame: number, textClips: Clip[] = []): void {
     const { width, height } = this.project.resolution;
     this.ctx.clearRect(0, 0, width, height);
     this.ctx.fillStyle = '#000000';
     this.ctx.fillRect(0, 0, width, height);
 
-    this.ctx.save();
-    this.applyEffectsFilter(clip);
-    this.ctx.globalAlpha = this.getClipOpacity(clip, frame);
-    this.ctx.drawImage(video, 0, 0, width, height);
-    this.ctx.restore();
-
-    for (const overlay of overlayClips) {
-      if (overlay.text !== undefined) {
-        this.drawTextClip(overlay, frame);
-      }
+    for (const clip of videoClips) {
+      const video = this.videoCache.get(clip.assetId);
+      if (!video) continue;
+      this.ctx.save();
+      this.applyEffectsFilter(clip);
+      this.ctx.globalAlpha = this.getClipOpacity(clip, frame);
+      this.ctx.drawImage(video, 0, 0, width, height);
+      this.ctx.restore();
     }
-  }
 
-  getFrameFromClip(clip: Clip): number {
-    const video = this.videoCache.get(clip.assetId);
-    if (!video) return clip.startFrame;
-    const sourceFrame = video.currentTime * this.project.fps;
-    const relativeFrame = (sourceFrame - clip.trimStart) / clip.speed;
-    return Math.floor(clip.startFrame + relativeFrame);
+    for (const overlay of textClips) {
+      this.drawTextClip(overlay, frame);
+    }
   }
 
   renderTestFrame(): void {
@@ -159,12 +170,12 @@ export class CanvasRenderer {
     this.ctx.clearRect(0, 0, width, height);
     this.ctx.fillStyle = '#000000';
     this.ctx.fillRect(0, 0, width, height);
-    this.ctx.fillStyle = '#4f46e5';
+    this.ctx.fillStyle = '#7cf29c';
     this.ctx.fillRect(width / 4, height / 4, width / 2, height / 2);
-    this.ctx.fillStyle = '#ffffff';
+    this.ctx.fillStyle = '#0b0d10';
     this.ctx.font = '32px sans-serif';
     this.ctx.textAlign = 'center';
-    this.ctx.fillText('Preview funcionando', width / 2, height / 2);
+    this.ctx.fillText('Preview', width / 2, height / 2);
   }
 
   private waitForSeek(video: HTMLVideoElement): Promise<void> {

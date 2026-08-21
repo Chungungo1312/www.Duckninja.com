@@ -3,7 +3,7 @@ import { useTimelineStore } from '../../store/timelineStore';
 
 export function ImportVideo() {
   const addAsset = useTimelineStore((s) => s.addAsset);
-  const addTrackWithClip = useTimelineStore((s) => s.addTrackWithClip);
+  const addVideoClip = useTimelineStore((s) => s.addVideoClip);
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -12,7 +12,6 @@ export function ImportVideo() {
     const url = URL.createObjectURL(file);
     const assetId = nanoid();
 
-    // Cargamos el video temporalmente para leer su duración real
     const tempVideo = document.createElement('video');
     tempVideo.src = url;
 
@@ -20,7 +19,7 @@ export function ImportVideo() {
       tempVideo.onloadedmetadata = () => resolve();
     });
 
-    const fps = 30; // asumimos 30fps por ahora; se puede detectar con más precisión luego
+    const fps = 30;
     const durationFrames = Math.floor(tempVideo.duration * fps);
 
     addAsset({
@@ -33,13 +32,16 @@ export function ImportVideo() {
       height: tempVideo.videoHeight,
     });
 
-    addTrackWithClip(assetId, durationFrames);
+    addVideoClip(assetId, durationFrames);
+
+    // Permite volver a importar el mismo archivo si se desea
+    e.target.value = '';
   };
 
   return (
     <div style={{ marginBottom: '1rem' }}>
       <label style={{ display: 'block', marginBottom: '0.5rem' }}>
-        Importar video:
+        Importar video (puedes importar varios, se agregan uno tras otro):
       </label>
       <input type="file" accept="video/*" onChange={handleFileChange} />
     </div>
